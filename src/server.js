@@ -27,81 +27,42 @@ connectDB().catch(err => {
 
 const app = express();
 
-// CORS configuration - Support both Flutter and Web Admin
-const getDynamicCorsOrigins = () => {
-  const nodeEnv = process.env.NODE_ENV || 'development';
-  const allowedOrigins = [];
-
-  if (nodeEnv === 'development') {
-    // Development: Allow localhost on common ports
-    allowedOrigins.push(
-      'http://localhost:3000',      // Web admin (React/Vue/Next.js default)
-      'http://localhost:3001',      // Alternative web admin port
-      'http://localhost:4200',      // Angular default
-      'http://localhost:5173',      // Vite default
-      'http://localhost:8080',      // Common dev port
-      'http://localhost:8081',      // Alternative dev port
-      'http://127.0.0.1:3000',
-      'http://127.0.0.1:3001',
-      'http://127.0.0.1:4200',
-      'http://127.0.0.1:5173',
-      'http://127.0.0.1:8080',
-      'http://127.0.0.1:8081'
-    );
-    // Flutter apps can make requests from any origin in development
-    allowedOrigins.push('*');
-  } else {
-    // Production: Only allow specific domains
-    allowedOrigins.push(
-      'https://coach.classialongevity.com',
-      process.env.WEB_ADMIN_URL || 'https://admin.example.com',
-      process.env.FLUTTER_APP_URL || 'https://app.example.com'
-    );
-  }
-
-  return allowedOrigins;
-};
-
+// CORS configuration - Universal for Flutter & Web
 const corsOptions = {
-  origin: (origin, callback) => {
-    const nodeEnv = process.env.NODE_ENV || 'development';
-    const allowedOrigins = getDynamicCorsOrigins();
+  origin: function (origin, callback) {
+    const isDev = process.env.NODE_ENV !== 'production';
+    const allowedOrigins = isDev
+      ? ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173']
+      : ['https://coach.classialongevity.com', 'http://coach.classialongevity.com'];
 
-    // Allow requests with no origin (like mobile apps or Postman)
-    if (!origin || nodeEnv === 'development') {
+    // Allow requests with no origin (mobile apps, Postman, cURL)
+    if (!origin || isDev) {
       return callback(null, true);
     }
 
-    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      console.warn(`CORS blocked request from origin: ${origin}`);
+      console.warn(`⚠️ CORS blocked: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
-  credentials: true,  // Allow cookies and authentication headers
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'HEAD'],
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'X-Requested-With',
-    'Accept',
-    'Origin',
-    'Access-Control-Request-Method',
-    'Access-Control-Request-Headers'
-  ],
-  exposedHeaders: ['Content-Length', 'X-JSON-Response'],
-  optionsSuccessStatus: 200, // Some legacy browsers choke on 204
-  maxAge: 86400 // 24 hours
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  exposedHeaders: ['Content-Length', 'X-Total-Count'],
+  optionsSuccessStatus: 200,
+  maxAge: 86400
 };
 
-// Apply CORS before other middleware
+// Apply CORS first (before any other middleware that needs it)
 app.use(cors(corsOptions));
-
-// Handle preflight requests
+// Explicitly handle preflight
 app.options('*', cors(corsOptions));
 
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
+}));
 app.use(compression()); 
 
 // Rate limiting configuration
@@ -120,17 +81,20 @@ const authLimiter = rateLimit({
   legacyHeaders: false
 });
 
-// Apply rate limiting to all routes
-app.use(limiter);
-
 // Middleware
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Debug middleware to log all requests
+// Debug middleware
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.originalUrl}`);
+  res.on('finish', () => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.originalUrl} - ${res.statusCode}`);
+  });
   next();
 });
+
+// Apply rate limiting
+app.use(limiter);
 
 // Routes
 app.use("/api/auth", authLimiter, authRoutes);
@@ -176,53 +140,45 @@ app.use((req, res) => {
 
 // Global error handling middleware (MUST be last)
 app.use((err, req, res, next) => {
-  // Handle CORS errors
-  if (err.message === 'Not allowed by CORS') {
-    return res.status(403).json({
-      success: false,
-      code: "CORS_ERROR",
-      message: "CORS policy violation",
-      origin: req.get('origin')
-    });
+  if (res.headersSent) {
+    return next(err);
   }
 
-  console.error('Server error:', {
-    message: err.message,
-    stack: err.stack,
+  const statusCode = err.status || err.statusCode || 500;
+  const message = err.message || 'Internal Server Error';
+
+  console.error(`❌ Error: ${statusCode} - ${message}`, {
     url: req.originalUrl,
-    method: req.method
+    method: req.method,
+    origin: req.get('origin'),
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
   });
 
-  res.status(err.status || 500).json({
+  res.status(statusCode).json({
     success: false,
-    code: err.code || "INTERNAL_ERROR",
-    message: err.message || "Internal server error",
-    error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    code: err.code || 'ERROR',
+    message: message,
+    ...(process.env.NODE_ENV === 'development' && { details: err.stack })
   });
 });
 
 const PORT = process.env.PORT || 5000;
 const nodeEnv = process.env.NODE_ENV || 'development';
-console.log('Starting server...');
-console.log('Port:', PORT);
-console.log('Environment:', nodeEnv);
 
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log('\n✅ Classia Coach Backend Server Started Successfully!\n');
-  console.log(`📡 Server running on port ${PORT}`);
-  console.log(`🌍 Environment: ${nodeEnv}`);
-  console.log(`🔐 CORS enabled for all configured origins (dev: localhost:*, prod: specific domains)`);
-  console.log(`🔑 Auth endpoint: http://localhost:${PORT}/api/auth/login`);
-  console.log(`🧪 Test endpoint: http://localhost:${PORT}/test`);
-  console.log(`📚 API Base: http://localhost:${PORT}/api\n`);
-  if (nodeEnv === 'development') {
-    console.log('ℹ️  CORS Settings (Dev): All localhost:* ports allowed');
+  const isDev = nodeEnv !== 'production';
+  console.log('\n✅ FitAura Backend Server Started!\n');
+  console.log(`📡 Port: ${PORT}`);
+  console.log(`🔧 Environment: ${nodeEnv}`);
+  if (isDev) {
+    console.log(`🌐 CORS: http://localhost:3000, http://localhost:5173 + Mobile Apps`);
   } else {
-    console.log('ℹ️  CORS Settings (Prod): Only whitelisted domains allowed');
+    console.log(`🌐 CORS: https://coach.classialongevity.com, https://fitaura-admin.vercel.app`);
   }
-  console.log('');
+  console.log(`🔑 API Base: http://localhost:${PORT}/api`);
+  console.log(`🧪 Test: http://localhost:${PORT}/test\n`);
 }).on('error', (err) => {
-  console.error('❌ Server failed to start:', err);
+  console.error('❌ Server failed:', err.message);
   process.exit(1);
 });
 

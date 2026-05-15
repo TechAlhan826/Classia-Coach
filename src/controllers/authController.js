@@ -75,10 +75,10 @@ exports.login = async (req, res) => {
     }
     
     // Check database connection
-    if (mongoose.connection.readyState !== 1) {
-      console.error('Database not connected. ReadyState:', mongoose.connection.readyState);
-      return res.status(500).json({ message: 'Database connection error' });
-    }
+    // if (mongoose.connection.readyState !== 1) {
+    //   console.error('Database not connected. ReadyState:', mongoose.connection.readyState);
+    //   return res.status(500).json({ message: 'Database connection error' });
+    // }
     
     // Find user
     const user = await User.findOne(user_id ? { user_id } : { email });
