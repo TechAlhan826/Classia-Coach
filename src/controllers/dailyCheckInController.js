@@ -1,6 +1,69 @@
 const DailyCheckIn = require('../models/DailyCheckIn');
 const Exercise = require('../models/Exercise');
 
+// Add Meal Macros — atomically increments protein/carbs/fat/calories for a specific day.
+// Designed for the food scanner feature: safe to call multiple times per day (accumulates).
+// Creates a minimal record if none exists for that date yet.
+exports.addMealMacros = async (req, res) => {
+  try {
+    const user_id = req.userId;
+    const { date, protein, carbs, fat } = req.body;
+
+    if (!date) {
+      return res.status(400).json({ message: 'date is required (YYYY-MM-DD)' });
+    }
+    if (protein == null || carbs == null || fat == null) {
+      return res.status(400).json({ message: 'protein, carbs and fat are required' });
+    }
+
+    const p = Math.max(0, parseInt(protein) || 0);
+    const c = Math.max(0, parseInt(carbs)   || 0);
+    const f = Math.max(0, parseInt(fat)     || 0);
+    // Calorie math: 1g protein = 4 kcal, 1g carbs = 4 kcal, 1g fat = 9 kcal
+    const addedCalories = (p * 4) + (c * 4) + (f * 9);
+
+    // Use findOneAndUpdate with $inc for atomic accumulation.
+    // setOnInsert provides safe defaults for required fields on first creation.
+    const updated = await DailyCheckIn.findOneAndUpdate(
+      { user_id, date },
+      {
+        $inc: {
+          protein:  p,
+          carbs:    c,
+          fat:      f,
+          calories: addedCalories,
+        },
+        $setOnInsert: {
+          user_id,
+          date,
+          steps:         0,
+          weight_kg:     0,
+          weight_gram:   0,
+          totalExercises: 0,
+          totalMinutes:  0,
+          exercise:      [],
+          mood:          1,
+          energy:        1,
+          notes:         '',
+          createdAt:     new Date(),
+        },
+        $set: { updatedAt: new Date() },
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    return res.status(200).json({
+      message: 'Meal macros added',
+      protein: updated.protein,
+      carbs:   updated.carbs,
+      fat:     updated.fat,
+      calories: updated.calories,
+    });
+  } catch (error) {
+    res.status(400).json({ message: 'Error adding meal macros', error: error.message });
+  }
+};
+
 // Add Daily Check-In
 exports.addCheckIn = async (req, res) => {
   try {

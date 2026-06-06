@@ -4,6 +4,8 @@ const dailyCheckInController = require('../controllers/dailyCheckInController');
 const auth = require('../middleware/auth');
 const adminAuth = require('../middleware/admin');
 
+// Add Meal Macros (food scanner \u2014 accumulates protein/carbs/fat for a day, upserts if needed)
+router.patch('/add-meal', auth, dailyCheckInController.addMealMacros);
 // Add Daily Check-In
 router.post('/add', auth, dailyCheckInController.addCheckIn);
 // Update Daily Check-In by ID
