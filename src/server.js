@@ -33,7 +33,7 @@ const corsOptions = {
     const isDev = process.env.NODE_ENV !== 'production';
     const allowedOrigins = isDev
       ? ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173']
-      : ['https://coach.classialongevity.com', 'http://coach.classialongevity.com'];
+      : ['https://coach.classialongevity.com', 'http://coach.classialongevity.com', 'https://classia-admin.vercel.app'];
 
     // Allow requests with no origin (mobile apps, Postman, cURL)
     if (!origin || isDev) {

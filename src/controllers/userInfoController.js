@@ -82,4 +82,45 @@ exports.deleteUserInfo = async (req, res) => {
   } catch (error) {
     res.status(400).json({ message: 'Error deleting user info', error });
   }
-}; 
+};
+
+// Admin — get any user's info by userId
+exports.getAnyUserInfo = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const userInfo = await UserInfo.findOne({ user_id: userId }).lean();
+    const user = await User.findOne({ user_id: userId }).select('name email loginType').lean();
+
+    if (!userInfo && !user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const merged = userInfo ? { ...userInfo } : {};
+    if (user) {
+      merged.name = user.name;
+      merged.email = user.email;
+      merged.loginType = user.loginType;
+    }
+
+    res.status(200).json({ success: true, userInfo: merged });
+  } catch (error) {
+    res.status(400).json({ message: 'Error fetching user info', error });
+  }
+};
+
+// Admin — update any user's info by userId
+exports.updateAnyUserInfo = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const userInfo = await UserInfo.findOneAndUpdate(
+      { user_id: userId },
+      { $set: req.body, updated_at: Date.now() },
+      { new: true, upsert: true }
+    );
+
+    res.status(200).json({ success: true, userInfo });
+  } catch (error) {
+    res.status(400).json({ message: 'Error updating user info', error });
+  }
+};

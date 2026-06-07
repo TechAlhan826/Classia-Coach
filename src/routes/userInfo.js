@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const userInfoController = require('../controllers/userInfoController');
 const auth = require('../middleware/auth');
+const adminAuth = require('../middleware/admin');
 
 // Add UserInfo
 router.post('/addUserInfo', auth, userInfoController.addUserInfo);
@@ -14,4 +15,9 @@ router.patch('/partialUpdateUserInfo', auth, userInfoController.partialUpdateUse
 // Delete UserInfo for logged-in user
 router.delete('/deleteUserInfo', auth, userInfoController.deleteUserInfo);
 
-module.exports = router; 
+// Admin — get any user's info by userId
+router.get('/admin/:userId', auth, adminAuth, userInfoController.getAnyUserInfo);
+// Admin — update any user's info by userId
+router.put('/admin/:userId', auth, adminAuth, userInfoController.updateAnyUserInfo);
+
+module.exports = router;

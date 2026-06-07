@@ -227,11 +227,94 @@ exports.getAllUsersForAdmin = async (req, res) => {
 
   } catch (error) {
     console.error('Admin get all users error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
-      code: "INTERNAL_ERROR", 
-      message: 'Server error', 
+      code: "INTERNAL_ERROR",
+      message: 'Server error',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
     });
   }
-}; 
+};
+
+// Admin — get single user by userId
+exports.getUserById = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findOne({ user_id: userId })
+      .select('-password')
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const userInfo = await UserInfo.findOne({ user_id: userId }).lean();
+
+    res.status(200).json({
+      success: true,
+      data: { ...user, userInfo: userInfo || null }
+    });
+  } catch (error) {
+    console.error('Admin getUserById error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
+
+// Admin — update user by userId (name, role, etc)
+exports.updateUserByAdmin = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    // Don't allow password to be set via this route — force hashing path
+    const { password, user_id, email, ...updateData } = req.body;
+
+    const user = await User.findOneAndUpdate(
+      { user_id: userId },
+      { ...updateData },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    res.status(200).json({ success: true, message: 'User updated', data: user });
+  } catch (error) {
+    console.error('Admin updateUser error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
+
+// Admin — delete user and their related data
+exports.deleteUserByAdmin = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Prevent admin from deleting themselves
+    if (req.userId === userId) {
+      return res.status(400).json({ success: false, message: 'Cannot delete your own account' });
+    }
+
+    const user = await User.findOneAndDelete({ user_id: userId });
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Clean up related collections
+    await UserInfo.findOneAndDelete({ user_id: userId });
+
+    const DailyCheckIn = require('../models/DailyCheckIn');
+    const Target = require('../models/Target');
+    await DailyCheckIn.deleteMany({ user_id: userId });
+    await Target.deleteMany({ user_id: userId });
+
+    res.status(200).json({
+      success: true,
+      message: 'User and all related data deleted successfully'
+    });
+  } catch (error) {
+    console.error('Admin deleteUser error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};

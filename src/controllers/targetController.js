@@ -604,10 +604,76 @@ exports.getUserAllWeeksData = async (req, res) => {
     
   } catch (err) {
     console.error('Error in getUserAllWeeksData:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       message: "Internal server error",
-      error: err.message 
+      error: err.message
     });
+  }
+};
+
+// Admin — set bulk targets for a specific user (coach assigns to member)
+exports.adminBulkSetTargets = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const targets = req.body;
+
+    if (!Array.isArray(targets)) {
+      return res.status(400).json({ message: 'Input should be an array.' });
+    }
+
+    const bulkOps = targets.map((target) => {
+      const parsedDate = new Date(target.date);
+      if (isNaN(parsedDate.getTime())) {
+        throw new Error(`Invalid date format: ${target.date}`);
+      }
+
+      return {
+        updateOne: {
+          filter: { user_id: userId, date: parsedDate },
+          update: {
+            $set: {
+              ...target,
+              user_id: userId,
+              date: parsedDate,
+              updatedAt: new Date(),
+              isDeleted: false
+            }
+          },
+          upsert: true
+        }
+      };
+    });
+
+    const result = await Target.bulkWrite(bulkOps);
+
+    res.status(200).json({
+      message: 'Targets set for user successfully.',
+      upserted: result.upsertedCount,
+      modified: result.modifiedCount,
+      matched: result.matchedCount
+    });
+  } catch (err) {
+    if (err.code === 11000) {
+      return res.status(409).json({
+        message: 'Duplicate target for this user/date.',
+        error: 'Duplicate key error'
+      });
+    }
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Admin — hard delete a target by id
+exports.adminDeleteTarget = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const deleted = await Target.findByIdAndDelete(id);
+    if (!deleted) return res.status(404).json({ message: 'Target not found.' });
+
+    res.status(200).json({ message: 'Target deleted permanently.' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 };
