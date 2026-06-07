@@ -27,37 +27,52 @@ connectDB().catch(err => {
 
 const app = express();
 
-// CORS configuration - Universal for Flutter & Web
+// CORS — single flat allowlist covering all environments.
+// No dev/prod split — Vercel sets NODE_ENV='production' even during local testing
+// through the CLI, which caused localhost to get blocked. Flat list is simpler
+// and explicit about what's actually allowed.
+const ALLOWED_ORIGINS = [
+  // Local development
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:8080',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:8080',
+  // Production — admin panel
+  'https://classia-admin.vercel.app',
+  'http://classia-admin.vercel.app',
+  // Production — main web
+  'https://coach.classialongevity.com',
+  'http://coach.classialongevity.com',
+];
+
 const corsOptions = {
   origin: function (origin, callback) {
-    const isDev = process.env.NODE_ENV !== 'production';
-    const allowedOrigins = isDev
-      ? ['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173']
-      : ['https://coach.classialongevity.com', 'http://coach.classialongevity.com', 'https://classia-admin.vercel.app'];
+    // No origin = mobile app / Postman / cURL — always allow
+    if (!origin) return callback(null, true);
 
-    // Allow requests with no origin (mobile apps, Postman, cURL)
-    if (!origin || isDev) {
+    if (ALLOWED_ORIGINS.includes(origin)) {
       return callback(null, true);
     }
 
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      console.warn(`⚠️ CORS blocked: ${origin}`);
-      callback(new Error('Not allowed by CORS'));
-    }
+    // Log blocked origins so we can add them if legit
+    console.warn(`⚠️  CORS blocked origin: ${origin}`);
+    // Return false (not an Error) so express-cors sends a 403 with headers
+    // instead of throwing a 500 that arrives with no CORS headers at all
+    return callback(null, false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'HEAD'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'X-Target-User'],
   exposedHeaders: ['Content-Length', 'X-Total-Count'],
   optionsSuccessStatus: 200,
-  maxAge: 86400
+  maxAge: 86400  // browser caches preflight for 24h
 };
 
-// Apply CORS first (before any other middleware that needs it)
+// CORS must be the very first middleware — preflight OPTIONS must be handled
+// before any auth/rate-limit middleware touches the request
 app.use(cors(corsOptions));
-// Explicitly handle preflight
 app.options('*', cors(corsOptions));
 
 app.use(helmet({
