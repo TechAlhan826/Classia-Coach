@@ -3,6 +3,12 @@ const UserInfo = require('../models/UserInfo');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
+const crypto = require('crypto');
+
+// Helper — generate a compact unique user_id
+function generateUserId() {
+  return 'usr_' + crypto.randomBytes(12).toString('hex');
+}
 
 exports.register = async (req, res) => {
   try {
@@ -315,6 +321,67 @@ exports.deleteUserByAdmin = async (req, res) => {
     });
   } catch (error) {
     console.error('Admin deleteUser error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
+
+// Admin — create a new member directly (EMAIL login type)
+exports.adminCreateUser = async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name, email, and password are required'
+      });
+    }
+
+    // Email format sanity check
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ success: false, message: 'Invalid email format' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters' });
+    }
+
+    // Check for duplicates
+    const existing = await User.findOne({ email: email.toLowerCase().trim() });
+    if (existing) {
+      return res.status(409).json({ success: false, message: 'A member with this email already exists' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user_id = generateUserId();
+
+    const user = new User({
+      name:      name.trim(),
+      email:     email.toLowerCase().trim(),
+      password:  hashedPassword,
+      user_id,
+      loginType: 'EMAIL',
+      role:      'user'
+    });
+
+    await user.save();
+
+    console.log(`Admin created new user: ${user.email} (${user.user_id})`);
+
+    res.status(201).json({
+      success: true,
+      message: 'Member created successfully',
+      data: {
+        user_id:   user.user_id,
+        name:      user.name,
+        email:     user.email,
+        loginType: user.loginType,
+        createdAt: user.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Admin createUser error:', error);
     res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
