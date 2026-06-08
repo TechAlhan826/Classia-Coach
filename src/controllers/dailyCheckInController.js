@@ -610,10 +610,28 @@ exports.getDashboardStats = async (req, res) => {
     });
     
     // 10. Get top performing users (users with most targets this week)
-    const topUsersThisWeek = Object.entries(currentWeekUserTargets)
-      .sort(([,a], [,b]) => b - a)
-      .slice(0, 5)
-      .map(([userId, targetCount]) => ({ userId, targetCount }));
+    const topUsersSorted = Object.entries(currentWeekUserTargets)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 5);
+
+    // Enrich with real names via a single query (no N+1)
+    const topUserIds = topUsersSorted.map(([uid]) => uid);
+    const topUserDocs = await User.find(
+      { user_id: { $in: topUserIds } },
+      { user_id: 1, name: 1, email: 1 }
+    ).lean();
+
+    const userNameMap = topUserDocs.reduce((acc, u) => {
+      acc[u.user_id] = { name: u.name, email: u.email };
+      return acc;
+    }, {});
+
+    const topUsersThisWeek = topUsersSorted.map(([userId, targetCount]) => ({
+      userId,
+      name:  userNameMap[userId]?.name  || 'Unknown',
+      email: userNameMap[userId]?.email || '',
+      targetCount
+    }));
     
     // 11. Get weekly trend data (last 4 weeks)
     const weeklyTrends = [];
