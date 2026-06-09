@@ -35,9 +35,9 @@ const userSchema = new mongoose.Schema({
     default: 'user',
     trim: true
   },
-  isBlocked: {
+  isActive: {
     type: Boolean,
-    default: false
+    default: true
   }
 }, { timestamps: true });
 

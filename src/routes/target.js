@@ -1,4 +1,4 @@
-﻿const express = require("express");
+const express = require("express");
 const router = express.Router();
 const targetController = require("../controllers/targetController");
 const auth = require("../middleware/auth");
@@ -22,11 +22,13 @@ router.get("/admin/all", auth, adminAuth, targetController.getAllTargetsWithUser
 // Get all weeks data for a specific user (Admin API)
 router.get("/admin/user/:userId", auth, adminAuth, targetController.getUserAllWeeksData);
 
-// Admin â€” set bulk targets for a specific user (coach assigns targets to members)
+// Admin — set bulk targets for a specific user (coach assigns targets to members)
 router.post("/admin/user/:userId/bulk", auth, adminAuth, targetController.adminBulkSetTargets);
 
-// Admin â€” delete a specific target by id (any user)
+// Admin — hard delete a specific target by id (any user)
 router.delete("/admin/:id", auth, adminAuth, targetController.adminDeleteTarget);
 
-module.exports = router;
+// Admin — export weekly data as CSV for a specific user
+router.get("/admin/user/:userId/export-csv", auth, adminAuth, targetController.exportUserWeeklyCSV);
 
+module.exports = router;

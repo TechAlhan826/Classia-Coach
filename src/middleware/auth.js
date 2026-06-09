@@ -9,14 +9,17 @@ const auth = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.userId = decoded.userId;
 
-    // Check if user is blocked — inline so we don't need an extra middleware
-    const User = require('../models/User');
-    const user = await User.findOne({ user_id: req.userId }).select('isBlocked role').lean();
-    if (user?.isBlocked) {
-      return res.status(403).json({
-        code: 'ACCOUNT_BLOCKED',
-        message: 'Your account has been suspended. Please contact the admin.'
-      });
+    // Block check — only for app users (not admin panel requests)
+    // Admin panel sends X-Admin-Panel header — skip block check for admins
+    if (!req.header('X-Admin-Panel')) {
+      const User = require('../models/User');
+      const user = await User.findOne({ user_id: req.userId }, { isActive: 1, role: 1 }).lean();
+      if (user && user.isActive === false) {
+        return res.status(403).json({
+          code: 'ACCOUNT_BLOCKED',
+          message: 'Your account has been suspended. Please contact your coach or admin for assistance.'
+        });
+      }
     }
 
     next();
