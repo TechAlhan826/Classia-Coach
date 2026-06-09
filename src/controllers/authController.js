@@ -74,6 +74,13 @@ exports.login = async (req, res) => {
       if (!isMatch) return res.status(400).json({ message: 'Invalid credentials' });
     }
 
+    // Block check — must come after credential verification to avoid leaking account existence
+    if (user.isActive === false)
+      return res.status(403).json({
+        message: 'Your account has been blocked. Please contact the administrator.',
+        code: 'ACCOUNT_BLOCKED'
+      });
+
     const token = jwt.sign({ userId: user.user_id }, process.env.JWT_SECRET, { expiresIn: '1d' });
 
     console.log('Login successful for user:', user.email);

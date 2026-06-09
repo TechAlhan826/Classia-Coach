@@ -565,192 +565,188 @@ exports.getAllCheckInsWithUsers = async (req, res) => {
       error: err.message 
     });
   }
-}; 
+};
 
 // Get dashboard statistics (Admin API)
 exports.getDashboardStats = async (req, res) => {
   try {
-    // Get current date and week information
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const now     = new Date();
+    const today   = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    // Calculate current week (Monday to Sunday)
+
+    // Current week (Mon–Sun)
     const currentWeekStart = new Date(today);
-    const dayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, etc.
-    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Days to go back to Monday
+    const dayOfWeek    = today.getDay();
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
     currentWeekStart.setDate(today.getDate() - daysToMonday);
-    
     const currentWeekEnd = new Date(currentWeekStart);
     currentWeekEnd.setDate(currentWeekStart.getDate() + 6);
     currentWeekEnd.setHours(23, 59, 59, 999);
-    
-    // Get all required models
-    const User = require('../models/User');
-    const Target = require('../models/Target');
+
+    // Last 7 days window for leaderboard / insights
+    const last7Start = new Date(today);
+    last7Start.setDate(last7Start.getDate() - 7);
+
+    const User     = require('../models/User');
+    const Target   = require('../models/Target');
     const Exercise = require('../models/Exercise');
-    
-    // 1. Get total users count
-    const totalUsers = await User.countDocuments({});
-    
-    // 2. Get total targets count
-    const totalTargets = await Target.countDocuments({ isDeleted: false });
-    
-    // 3. Get current week targets count (user-wise, Monday to Sunday)
+
+    // 1. Overview counts
+    const [totalUsers, totalTargets, totalExercises, todaysCheckIns] = await Promise.all([
+      User.countDocuments({}),
+      Target.countDocuments({ isDeleted: false }),
+      Exercise.countDocuments({}),
+      DailyCheckIn.countDocuments({ createdAt: { $gte: today, $lt: tomorrow } })
+    ]);
+
+    // 2. Current week targets grouped by user
     const currentWeekTargets = await Target.find({
       date: { $gte: currentWeekStart, $lte: currentWeekEnd },
       isDeleted: false
-    });
-    
-    // Group targets by user for current week
-    const currentWeekUserTargets = currentWeekTargets.reduce((users, target) => {
-      if (!users[target.user_id]) {
-        users[target.user_id] = 0;
-      }
-      users[target.user_id]++;
-      return users;
+    }).lean();
+
+    const currentWeekUserTargets = currentWeekTargets.reduce((acc, t) => {
+      acc[t.user_id] = (acc[t.user_id] || 0) + 1;
+      return acc;
     }, {});
-    
-    const currentWeekUsersCount = Object.keys(currentWeekUserTargets).length;
+    const currentWeekUsersCount   = Object.keys(currentWeekUserTargets).length;
     const currentWeekTotalTargets = currentWeekTargets.length;
-    
-    // 4. Get today's daily check-ins count
-    const todaysCheckIns = await DailyCheckIn.countDocuments({
-      createdAt: { $gte: today, $lt: tomorrow }
-    });
-    
-    // 5. Get total exercises count
-    const totalExercises = await Exercise.countDocuments({});
-    
-    // 6. Get additional statistics for current week
-    const currentWeekStats = {
-      weekStart: currentWeekStart.toISOString().split('T')[0],
-      weekEnd: currentWeekEnd.toISOString().split('T')[0],
-      totalUsers: currentWeekUsersCount,
-      totalTargets: currentWeekTotalTargets,
-      userBreakdown: currentWeekUserTargets
-    };
-    
-    // 7. Get today's statistics
-    const todaysStats = {
-      date: today.toISOString().split('T')[0],
-      dayOfWeek: today.toLocaleDateString('en-US', { weekday: 'long' }),
-      checkInsCount: todaysCheckIns
-    };
-    
-    // 8. Get recent activity (last 7 days)
-    const lastWeekStart = new Date(today);
-    lastWeekStart.setDate(lastWeekStart.getDate() - 7);
-    
-    const lastWeekCheckIns = await DailyCheckIn.countDocuments({
-      createdAt: { $gte: lastWeekStart, $lt: tomorrow }
-    });
-    
-    const lastWeekTargets = await Target.countDocuments({
-      date: { $gte: lastWeekStart, $lt: tomorrow },
-      isDeleted: false
-    });
-    
-    // 9. Get user growth (users created in last 30 days)
-    const lastMonthStart = new Date(today);
-    lastMonthStart.setDate(lastMonthStart.getDate() - 30);
-    
-    const newUsersThisMonth = await User.countDocuments({
-      createdAt: { $gte: lastMonthStart, $lt: tomorrow }
-    });
-    
-    // 10. Get top performing users (users with most targets this week)
+
+    // 3. Recent activity (last 7 days)
+    const [lastWeekCheckIns, lastWeekTargets, newUsersThisMonth] = await Promise.all([
+      DailyCheckIn.countDocuments({ createdAt: { $gte: last7Start, $lt: tomorrow } }),
+      Target.countDocuments({ date: { $gte: last7Start, $lt: tomorrow }, isDeleted: false }),
+      User.countDocuments({ createdAt: { $gte: new Date(today.getTime() - 30 * 864e5), $lt: tomorrow } })
+    ]);
+
+    // 4. Top performers by target count this week (enriched with real names)
     const topUsersSorted = Object.entries(currentWeekUserTargets)
       .sort(([, a], [, b]) => b - a)
       .slice(0, 5);
-
-    // Enrich with real names via a single query (no N+1)
-    const topUserIds = topUsersSorted.map(([uid]) => uid);
+    const topUserIds  = topUsersSorted.map(([uid]) => uid);
     const topUserDocs = await User.find(
       { user_id: { $in: topUserIds } },
       { user_id: 1, name: 1, email: 1 }
     ).lean();
-
     const userNameMap = topUserDocs.reduce((acc, u) => {
       acc[u.user_id] = { name: u.name, email: u.email };
       return acc;
     }, {});
-
     const topUsersThisWeek = topUsersSorted.map(([userId, targetCount]) => ({
       userId,
-      name:  userNameMap[userId]?.name  || 'Unknown',
-      email: userNameMap[userId]?.email || '',
+      name:        userNameMap[userId]?.name  || 'Unknown',
+      email:       userNameMap[userId]?.email || '',
       targetCount
     }));
-    
-    // 11. Get weekly trend data (last 4 weeks)
-    const weeklyTrends = [];
+
+    // 5. Steps leaderboard — top 5 users by total steps in last 7 days
+    const stepsLeaderboardRaw = await DailyCheckIn.aggregate([
+      { $match: { createdAt: { $gte: last7Start, $lt: tomorrow }, steps: { $exists: true, $gt: 0 } } },
+      { $group: { _id: '$user_id', totalSteps: { $sum: '$steps' }, days: { $sum: 1 } } },
+      { $sort: { totalSteps: -1 } },
+      { $limit: 5 }
+    ]);
+    const leaderUserIds  = stepsLeaderboardRaw.map(r => r._id);
+    const leaderUserDocs = await User.find(
+      { user_id: { $in: leaderUserIds } },
+      { user_id: 1, name: 1, email: 1 }
+    ).lean();
+    const leaderNameMap = leaderUserDocs.reduce((acc, u) => {
+      acc[u.user_id] = { name: u.name, email: u.email };
+      return acc;
+    }, {});
+    const stepsLeaderboard = stepsLeaderboardRaw.map((r, i) => ({
+      rank:       i + 1,
+      userId:     r._id,
+      name:       leaderNameMap[r._id]?.name  || 'Unknown',
+      email:      leaderNameMap[r._id]?.email || '',
+      totalSteps: r.totalSteps,
+      days:       r.days
+    }));
+
+    // 6. Exercise insights — top 5 exercises by total minutes in last 7 days
+    const exerciseInsightsRaw = await DailyCheckIn.aggregate([
+      { $match: { createdAt: { $gte: last7Start, $lt: tomorrow }, 'exercise.0': { $exists: true } } },
+      { $unwind: '$exercise' },
+      { $group: { _id: '$exercise.id', totalMinutes: { $sum: '$exercise.minutes' }, sessions: { $sum: 1 } } },
+      { $sort: { totalMinutes: -1 } },
+      { $limit: 5 },
+      { $lookup: { from: 'exercises', localField: '_id', foreignField: '_id', as: 'ex' } },
+      { $unwind: { path: '$ex', preserveNullAndEmptyArrays: true } },
+      { $project: {
+          exerciseId:   '$_id',
+          name:         { $ifNull: ['$ex.exercise', 'Unknown'] },
+          category:     { $ifNull: ['$ex.category', '—']      },
+          totalMinutes: 1,
+          sessions:     1
+      }}
+    ]);
+
+    // 7. Weekly trend (last 4 weeks) — run in parallel
+    const trendPromises = [];
     for (let i = 3; i >= 0; i--) {
-      const weekStart = new Date(currentWeekStart);
-      weekStart.setDate(weekStart.getDate() - (i * 7));
-      
-      const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekStart.getDate() + 6);
-      weekEnd.setHours(23, 59, 59, 999);
-      
-      const weekTargets = await Target.countDocuments({
-        date: { $gte: weekStart, $lte: weekEnd },
-        isDeleted: false
-      });
-      
-      const weekCheckIns = await DailyCheckIn.countDocuments({
-        createdAt: { $gte: weekStart, $lte: weekEnd }
-      });
-      
-      weeklyTrends.push({
-        weekStart: weekStart.toISOString().split('T')[0],
-        weekEnd: weekEnd.toISOString().split('T')[0],
-        targets: weekTargets,
-        checkIns: weekCheckIns
-      });
+      const wStart = new Date(currentWeekStart);
+      wStart.setDate(wStart.getDate() - i * 7);
+      const wEnd = new Date(wStart);
+      wEnd.setDate(wStart.getDate() + 6);
+      wEnd.setHours(23, 59, 59, 999);
+      trendPromises.push(
+        Promise.all([
+          Target.countDocuments({ date: { $gte: wStart, $lte: wEnd }, isDeleted: false }),
+          DailyCheckIn.countDocuments({ createdAt: { $gte: wStart, $lte: wEnd } })
+        ]).then(([targets, checkIns]) => ({
+          weekStart: wStart.toISOString().split('T')[0],
+          weekEnd:   wEnd.toISOString().split('T')[0],
+          targets,
+          checkIns
+        }))
+      );
     }
-    
+    const weeklyTrends = await Promise.all(trendPromises);
+
     res.status(200).json({
       success: true,
-      message: "Dashboard statistics retrieved successfully",
+      message: 'Dashboard statistics retrieved successfully',
       data: {
         overview: {
           totalUsers,
           totalTargets,
           totalExercises,
-          currentWeekUsers: currentWeekUsersCount,
+          currentWeekUsers:   currentWeekUsersCount,
           currentWeekTargets: currentWeekTotalTargets,
           todaysCheckIns
         },
-        currentWeek: currentWeekStats,
-        today: todaysStats,
+        currentWeek: {
+          weekStart:    currentWeekStart.toISOString().split('T')[0],
+          weekEnd:      currentWeekEnd.toISOString().split('T')[0],
+          totalUsers:   currentWeekUsersCount,
+          totalTargets: currentWeekTotalTargets,
+          userBreakdown: currentWeekUserTargets
+        },
+        today: {
+          date:          today.toISOString().split('T')[0],
+          dayOfWeek:     today.toLocaleDateString('en-US', { weekday: 'long' }),
+          checkInsCount: todaysCheckIns
+        },
         recentActivity: {
-          last7Days: {
-            checkIns: lastWeekCheckIns,
-            targets: lastWeekTargets
-          },
-          last30Days: {
-            newUsers: newUsersThisMonth
-          }
+          last7Days:  { checkIns: lastWeekCheckIns, targets: lastWeekTargets },
+          last30Days: { newUsers: newUsersThisMonth }
         },
-        topPerformers: {
-          thisWeek: topUsersThisWeek
-        },
+        topPerformers:    { thisWeek: topUsersThisWeek },
+        stepsLeaderboard,
+        exerciseInsights: exerciseInsightsRaw,
         weeklyTrends,
         lastUpdated: now.toISOString()
       }
     });
-    
+
   } catch (err) {
     console.error('Error in getDashboardStats:', err);
-    res.status(500).json({ 
-      success: false,
-      message: "Internal server error",
-      error: err.message 
-    });
+    res.status(500).json({ success: false, message: 'Internal server error', error: err.message });
   }
-}; 
+};
+
 // Admin — Export daily check-ins as CSV for a specific date (defaults to today)
 exports.exportCheckInsCSV = async (req, res) => {
   try {
