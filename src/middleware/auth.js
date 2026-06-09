@@ -1,7 +1,8 @@
 const jwt = require('jsonwebtoken');
 
 const auth = async (req, res, next) => {
-  const token = req.header('Authorization')?.replace('Bearer ', '');
+  // Accept token from Authorization header OR ?token= query param (for direct CSV download links)
+  const token = req.header('Authorization')?.replace('Bearer ', '') || req.query.token;
   if (!token) {
     return res.status(401).json({ message: 'No token, authorization denied' });
   }
