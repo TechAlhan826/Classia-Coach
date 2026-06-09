@@ -384,4 +384,60 @@ exports.adminCreateUser = async (req, res) => {
     console.error('Admin createUser error:', error);
     res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
-};
+};
+// Admin — block or unblock a user (toggle isBlocked)
+exports.toggleBlockUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (req.userId === userId) {
+      return res.status(400).json({ success: false, message: 'You cannot block your own account' });
+    }
+    const user = await User.findOne({ user_id: userId });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    user.isBlocked = !user.isBlocked;
+    await user.save();
+    const action = user.isBlocked ? 'blocked' : 'unblocked';
+    console.log(`Admin ${action} user: ${user.email}`);
+    res.status(200).json({
+      success: true,
+      message: `User ${action} successfully`,
+      data: { user_id: user.user_id, isBlocked: user.isBlocked }
+    });
+  } catch (error) {
+    console.error('Admin toggleBlockUser error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
+
+// Admin — reset a user's password
+exports.adminResetPassword = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: 'New password must be at least 6 characters' });
+    }
+    const user = await User.findOne({ user_id: userId });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    if (user.loginType !== 'EMAIL') {
+      return res.status(400).json({
+        success: false,
+        message: `This user logs in via ${user.loginType}. Password reset is only for email accounts.`
+      });
+    }
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+    console.log(`Admin reset password for user: ${user.email}`);
+    res.status(200).json({
+      success: true,
+      message: 'Password reset successfully. Member can now log in with the new password.'
+    });
+  } catch (error) {
+    console.error('Admin resetPassword error:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};

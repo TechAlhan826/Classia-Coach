@@ -64,6 +64,57 @@ exports.addMealMacros = async (req, res) => {
   }
 };
 
+// Update Steps — sets the step count for a specific day (not accumulated, just set/overwrite).
+// Called periodically by the device's pedometer tracking service.
+exports.updateSteps = async (req, res) => {
+  try {
+    const user_id = req.userId;
+    const { date, steps } = req.body;
+
+    if (!date) {
+      return res.status(400).json({ message: 'date is required (YYYY-MM-DD)' });
+    }
+    if (steps == null) {
+      return res.status(400).json({ message: 'steps is required' });
+    }
+
+    const stepCount = Math.max(0, parseInt(steps) || 0);
+
+    // Use $set for steps (not $inc) — steps is a running total for the day, not accumulated
+    const updated = await DailyCheckIn.findOneAndUpdate(
+      { user_id, date },
+      {
+        $set: { steps: stepCount, updatedAt: new Date() },
+        $setOnInsert: {
+          user_id,
+          date,
+          protein:        0,
+          carbs:          0,
+          fat:            0,
+          calories:       0,
+          weight_kg:      0,
+          weight_gram:    0,
+          totalExercises: 0,
+          totalMinutes:   0,
+          exercise:       [],
+          mood:           1,
+          energy:         1,
+          notes:          '',
+          createdAt:      new Date(),
+        },
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    return res.status(200).json({
+      message: 'Steps updated',
+      steps: updated.steps,
+    });
+  } catch (error) {
+    res.status(400).json({ message: 'Error updating steps', error: error.message });
+  }
+};
+
 // Add Daily Check-In
 exports.addCheckIn = async (req, res) => {
   try {
@@ -700,3 +751,54 @@ exports.getDashboardStats = async (req, res) => {
     });
   }
 }; 
+// Admin — Export daily check-ins as CSV for a specific date (defaults to today)
+exports.exportCheckInsCSV = async (req, res) => {
+  try {
+    const { date } = req.query;
+    const User = require('../models/User');
+
+    const targetDate = date ? new Date(date) : new Date();
+    const dayStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+    const dayEnd   = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    const checkIns = await DailyCheckIn.find({
+      createdAt: { $gte: dayStart, $lt: dayEnd }
+    }).lean();
+
+    const userIds  = [...new Set(checkIns.map(c => c.user_id))];
+    const users    = await User.find({ user_id: { $in: userIds } }, { user_id: 1, name: 1, email: 1 }).lean();
+    const userMap  = users.reduce((m, u) => { m[u.user_id] = u; return m; }, {});
+
+    const dateStr  = dayStart.toISOString().split('T')[0];
+    const filename = `checkins_${dateStr}.csv`;
+
+    const header = ['Date','Name','Email','Steps','Weight(kg)','Calories','Protein(g)','Carbs(g)','Fat(g)','Mood','Energy','Notes'];
+    const rows   = checkIns.map(c => {
+      const u = userMap[c.user_id] || {};
+      return [
+        c.date || dateStr,
+        u.name  || '',
+        u.email || '',
+        c.steps || 0,
+        c.weight_kg ? `${c.weight_kg}.${c.weight_gram || 0}` : '',
+        c.calories || 0,
+        c.protein  || 0,
+        c.carbs    || 0,
+        c.fat      || 0,
+        c.mood     || '',
+        c.energy   || '',
+        (c.notes || '').replace(/"/g, '""')
+      ].map(v => `"${v}"`).join(',');
+    });
+
+    const csv = [header.join(','), ...rows].join('\r\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send('\uFEFF' + csv); // BOM for Excel UTF-8
+  } catch (err) {
+    console.error('exportCheckInsCSV error:', err);
+    res.status(500).json({ success: false, message: 'CSV export failed', error: err.message });
+  }
+};

@@ -677,3 +677,46 @@ exports.adminDeleteTarget = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+// Admin — Export weekly target data for a user as CSV
+exports.exportUserWeeklyCSV = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const User = require('../models/User');
+
+    const user = await User.findOne({ user_id: userId }, { name: 1, email: 1 }).lean();
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    const targets = await Target.find({ user_id: userId, isDeleted: false }).sort({ date: 1 }).lean();
+
+    const filename = `weekly_report_${user.name.replace(/\s+/g, '_')}_${Date.now()}.csv`;
+
+    const header = ['Week Start','Week End','Date','Day','Steps Goal','Protein(g)','Carbs(g)','Fat(g)','Calories','Exercises Count'];
+    const rows = targets.map(t => {
+      const d = new Date(t.date);
+      const wStart = new Date(d); wStart.setDate(d.getDate() - d.getDay());
+      const wEnd   = new Date(wStart); wEnd.setDate(wStart.getDate() + 6);
+      return [
+        wStart.toISOString().split('T')[0],
+        wEnd.toISOString().split('T')[0],
+        d.toISOString().split('T')[0],
+        d.toLocaleDateString('en-US', { weekday: 'long' }),
+        t.steps    || 0,
+        t.protein  || 0,
+        t.carbs    || 0,
+        t.fat      || 0,
+        t.calories || 0,
+        (t.exercises || []).length
+      ].map(v => `"${v}"`).join(',');
+    });
+
+    const csv = [header.join(','), ...rows].join('\r\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send('\uFEFF' + csv);
+  } catch (err) {
+    console.error('exportUserWeeklyCSV error:', err);
+    res.status(500).json({ success: false, message: 'CSV export failed', error: err.message });
+  }
+};
